@@ -99,6 +99,7 @@
         <div class="input-group"><label>Years</label><input type="number" id="durY" value="0"></div>
         <div class="input-group"><label>Months</label><input type="number" id="durM" value="2"></div>
         <div class="input-group"><label>Days</label><input type="number" id="durD" value="0"></div>
+        <div class="input-group"><label>Dynamic Bonus</label><input type="number" id="dynBonus" value="0" min="0"></div>
     </div>
 
     <div class="controls-row">
@@ -157,7 +158,7 @@
     document.getElementById('startDate').value = today.toISOString().split('T')[0];
 
     // Re-calculate on any input change (also resets overrides)
-    const inputs = ['capital', 'rate', 'dividend', 'startDate', 'durY', 'durM', 'durD', 'toggle3rd', 'toggleBonus'];
+    const inputs = ['capital', 'rate', 'dividend', 'startDate', 'durY', 'durM', 'durD', 'toggle3rd', 'toggleBonus', 'dynBonus'];
     inputs.forEach(id => document.getElementById(id).addEventListener('input', calculate));
 
     const fmt = (n) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -171,6 +172,7 @@
             divAmt:      parseFloat(document.getElementById('dividend').value) || 0,
             has3rd:      document.getElementById('toggle3rd').checked,
             hasBonus:    document.getElementById('toggleBonus').checked,
+            dynBonus:    parseFloat(document.getElementById('dynBonus').value) || 0,
             start:       new Date(document.getElementById('startDate').value + 'T00:00:00'),
             totalDays:   (parseInt(document.getElementById('durY').value) || 0) * 365 +
                          (parseInt(document.getElementById('durM').value) || 0) * 30 +
@@ -186,18 +188,36 @@
     }
 
     // Compute one row's trade balances, respecting any overrides for that row.
-    function calcRow(startBal, rate, has3rd, ov) {
+    function calcRow(startBal, rate, has3rd, ov, bonusT1, bonusT2orT3) {
         ov = ov || {};
-        const b1 = ov.b1 !== undefined ? ov.b1 : startBal + (startBal * 0.01) * rate;
+        bonusT1 = bonusT1 || 0;
+        bonusT2orT3 = bonusT2orT3 || 0;
+        const b1 = ov.b1 !== undefined ? ov.b1 : startBal + (startBal * 0.01) * rate + bonusT1;
         const p1 = b1 - startBal;
-        const b2 = ov.b2 !== undefined ? ov.b2 : b1 + (b1 * 0.01) * rate;
-        const p2 = b2 - b1;
-        let b3 = b2, p3 = 0;
+        let b2, p2, b3, p3;
         if (has3rd) {
-            b3 = ov.b3 !== undefined ? ov.b3 : b2 + (b2 * 0.01) * rate;
+            b2 = ov.b2 !== undefined ? ov.b2 : b1 + (b1 * 0.01) * rate;
+            p2 = b2 - b1;
+            b3 = ov.b3 !== undefined ? ov.b3 : b2 + (b2 * 0.01) * rate + bonusT2orT3;
             p3 = b3 - b2;
+        } else {
+            b2 = ov.b2 !== undefined ? ov.b2 : b1 + (b1 * 0.01) * rate + bonusT2orT3;
+            p2 = b2 - b1;
+            b3 = b2; p3 = 0;
         }
         return { b1, p1, b2, p2, b3, p3, dProfit: (has3rd ? b3 : b2) - startBal };
+    }
+
+    // Compute the bonus amounts for a single day from the Dynamic Bonus input.
+    // Each unit = 1% of baseCapital. Max 2 units applied after 1st trade, max 2 after 2nd/3rd trade.
+    // Any remainder carries to the next day's starting balance.
+    function getBonusAmounts(inp) {
+        if (!inp.dynBonus || inp.dynBonus <= 0) return { t1: 0, t2orT3: 0, carry: 0 };
+        const unit = inp.baseCapital * 0.01;
+        const t1 = Math.min(2, inp.dynBonus) * unit;
+        const t2orT3 = Math.min(2, Math.max(0, inp.dynBonus - 2)) * unit;
+        const carry = Math.max(0, inp.dynBonus - 4) * unit;
+        return { t1, t2orT3, carry };
     }
 
     // ---- Core calculation ----
@@ -206,14 +226,17 @@
         const inp = getInputs();
         let bal = inp.hasBonus ? (inp.baseCapital * 1.05) : inp.baseCapital;
         rowData = [];
+        const bonusAmts = getBonusAmounts(inp);
+        let carryBonus = 0;
 
         for (let i = 0; i < inp.totalDays; i++) {
             const rowDate = new Date(inp.start);
             rowDate.setDate(inp.start.getDate() + i);
             const divApplied = getDivApplied(rowDate, inp.divAmt);
-            bal += divApplied;
-            const calc = calcRow(bal, inp.rate, inp.has3rd, null);
-            rowData.push({ date: rowDate, dayNum: i + 1, startBalance: bal, divApplied, ...calc });
+            bal += divApplied + carryBonus;
+            const calc = calcRow(bal, inp.rate, inp.has3rd, null, bonusAmts.t1, bonusAmts.t2orT3);
+            rowData.push({ date: rowDate, dayNum: i + 1, startBalance: bal, divApplied, carryBonus: bonusAmts.carry, ...calc });
+            carryBonus = bonusAmts.carry;
             bal = inp.has3rd ? calc.b3 : calc.b2;
         }
         renderTable();
@@ -222,14 +245,17 @@
     // Re-run calculations from a given row index forward (after a cell override).
     function recalculateFrom(startIndex) {
         const inp = getInputs();
+        const bonusAmts = getBonusAmounts(inp);
         for (let i = startIndex; i < rowData.length; i++) {
+            const carryFromPrev = i > 0 ? (rowData[i - 1].carryBonus || 0) : 0;
             let bal = i === 0
                 ? (inp.hasBonus ? inp.baseCapital * 1.05 : inp.baseCapital)
-                : (inp.has3rd ? rowData[i - 1].b3 : rowData[i - 1].b2);
+                : (inp.has3rd ? rowData[i - 1].b3 : rowData[i - 1].b2) + carryFromPrev;
             bal += rowData[i].divApplied;
             rowData[i].startBalance = bal;
-            const calc = calcRow(bal, inp.rate, inp.has3rd, overrides[i]);
+            const calc = calcRow(bal, inp.rate, inp.has3rd, overrides[i], bonusAmts.t1, bonusAmts.t2orT3);
             Object.assign(rowData[i], calc);
+            rowData[i].carryBonus = bonusAmts.carry;
         }
         renderTable();
     }
@@ -329,9 +355,29 @@
         const cell = e.target;
         const ri  = parseInt(cell.dataset.row);
         const col = cell.dataset.col;
-        const newVal = parseFmt(cell.textContent);
+        const rawText = cell.textContent.trim();
 
-        if (!newVal || newVal <= 0) {
+        // Fallback to 0 when the cell is empty or fully erased; reject non-numeric input
+        let newVal;
+        if (rawText === '') {
+            newVal = 0;
+        } else {
+            const parsed = parseFloat(rawText.replace(/[$,\s]/g, ''));
+            if (isNaN(parsed)) {
+                cell.textContent = fmt(rowData[ri][col]);
+                return;
+            }
+            newVal = parsed;
+        }
+
+        // Reject negative values
+        if (newVal < 0) {
+            cell.textContent = fmt(rowData[ri][col]);
+            return;
+        }
+
+        // Don't commit if the value hasn't actually changed
+        if (Math.abs(newVal - rowData[ri][col]) < 0.005) {
             cell.textContent = fmt(rowData[ri][col]);
             return;
         }
