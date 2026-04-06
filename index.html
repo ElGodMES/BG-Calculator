@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Trading Compounding Model</title>
+    <style>
+        :root { 
+            --primary: #3b82f6; --bg: #0f172a; --card: #1e293b; 
+            --text: #f1f5f9; --accent: #10b981; --border: #334155;
+            --input-bg: #0f172a; --header-bg: #334155;
+        }
+
+        /* Light Mode Overrides */
+        [data-theme="light"] {
+            --bg: #f8fafc; --card: #ffffff; --text: #1e293b; 
+            --border: #cbd5e1; --input-bg: #f1f5f9; --header-bg: #e2e8f0;
+        }
+
+        * { box-sizing: border-box; transition: background 0.2s, color 0.2s; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 8px; margin: 0; }
+        .container { max-width: 100%; margin: auto; background: var(--card); padding: 10px; border-radius: 12px; }
+        
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        h2 { margin: 0; color: var(--primary); font-size: 1.1rem; }
+        
+        .theme-btn { 
+            background: var(--header-bg); border: 1px solid var(--border); color: var(--text);
+            padding: 6px 12px; border-radius: 20px; font-size: 0.7rem; font-weight: bold; cursor: pointer;
+        }
+
+        .header-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+        .input-group { display: flex; flex-direction: column; }
+        label { font-size: 0.6rem; font-weight: 700; color: var(--primary); text-transform: uppercase; margin-bottom: 2px; }
+        input[type="number"], input[type="date"] { 
+            padding: 6px; border: 1px solid var(--border); border-radius: 4px; 
+            background: var(--input-bg); color: var(--text); font-size: 0.85rem; 
+        }
+
+        .controls-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+        .toggle-box { 
+            display: flex; align-items: center; justify-content: center; gap: 6px; 
+            background: var(--header-bg); padding: 8px; border-radius: 4px; font-size: 0.7rem; font-weight: bold;
+        }
+
+        .table-wrapper { overflow-x: auto; border: 1px solid var(--border); border-radius: 4px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px 4px; border-bottom: 1px solid var(--border); font-size: 0.75rem; white-space: nowrap; }
+        th { background: var(--header-bg); color: var(--primary); text-align: left; }
+        
+        .profit-cell { font-weight: bold; color: var(--accent); text-align: right; }
+        .trade-cell { text-align: right; }
+        .text-center { text-align: center; }
+        .hidden { display: none; }
+
+        /* Floating Back to Top Button */
+        #backToTop {
+            position: fixed; bottom: 20px; right: 20px; 
+            background: var(--primary); color: white; border: none;
+            width: 40px; height: 40px; border-radius: 50%;
+            display: none; justify-content: center; align-items: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3); cursor: pointer; z-index: 100;
+        }
+    </style>
+</head>
+<body data-theme="dark">
+
+<div class="container">
+    <div class="top-bar">
+        <h2>Trading Model</h2>
+        <button class="theme-btn" id="themeToggle">LIGHT MODE</button>
+    </div>
+    
+    <div class="header-inputs">
+        <div class="input-group"><label>Capital</label><input type="number" id="capital" value="1000"></div>
+        <div class="input-group"><label>Rate (%)</label><input type="number" id="rate" value="61"></div>
+        <div class="input-group"><label>Dividend</label><input type="number" id="dividend" value="0"></div>
+        <div class="input-group"><label>Start Date</label><input type="date" id="startDate"></div>
+        <div class="input-group"><label>Years</label><input type="number" id="durY" value="0"></div>
+        <div class="input-group"><label>Months</label><input type="number" id="durM" value="2"></div>
+        <div class="input-group"><label>Days</label><input type="number" id="durD" value="0"></div>
+    </div>
+
+    <div class="controls-row">
+        <label class="toggle-box"><input type="checkbox" id="toggleBonus"> 5% Bonus</label>
+        <label class="toggle-box"><input type="checkbox" id="toggle3rd"> 3rd Trade</label>
+    </div>
+
+    <div class="table-wrapper">
+        <table id="mainTable">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th class="text-center">Day</th>
+                    <th style="text-align: right;">T1</th>
+                    <th style="text-align: right;">T2</th>
+                    <th id="th3rd" class="hidden" style="text-align: right;">T3</th>
+                    <th style="text-align: right;">Profit</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<button id="backToTop">↑</button>
+
+<script>
+    // Theme Toggle Logic
+    const themeToggle = document.getElementById('themeToggle');
+    const body = document.body;
+    themeToggle.addEventListener('click', () => {
+        const isDark = body.getAttribute('data-theme') === 'dark';
+        body.setAttribute('data-theme', isDark ? 'light' : 'dark');
+        themeToggle.innerText = isDark ? 'DARK MODE' : 'LIGHT MODE';
+    });
+
+    // Scroll to Top Logic
+    const topBtn = document.getElementById('backToTop');
+    window.onscroll = () => {
+        topBtn.style.display = (window.scrollY > 300) ? "flex" : "none";
+    };
+    topBtn.addEventListener('click', () => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    // Calculator Logic
+    document.getElementById('startDate').valueAsDate = new Date();
+    const inputs = ['capital', 'rate', 'dividend', 'startDate', 'durY', 'durM', 'durD', 'toggle3rd', 'toggleBonus'];
+    inputs.forEach(id => document.getElementById(id).addEventListener('input', calculate));
+
+    const fmt = (num) => '$' + num.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+    function calculate() {
+        let baseCapital = parseFloat(document.getElementById('capital').value) || 0;
+        let currentBalance = document.getElementById('toggleBonus').checked ? (baseCapital * 1.05) : baseCapital;
+        const rate = (parseFloat(document.getElementById('rate').value) || 0) / 100;
+        const divAmt = parseFloat(document.getElementById('dividend').value) || 0;
+        const start = new Date(document.getElementById('startDate').value);
+        const use3rd = document.getElementById('toggle3rd').checked;
+
+        const totalDays = (parseInt(document.getElementById('durY').value) || 0) * 365 + 
+                         (parseInt(document.getElementById('durM').value) || 0) * 30 + 
+                         (parseInt(document.getElementById('durD').value) || 0);
+
+        const tableBody = document.getElementById('tableBody');
+        document.getElementById('th3rd').classList.toggle('hidden', !use3rd);
+        tableBody.innerHTML = '';
+
+        for (let i = 1; i <= totalDays; i++) {
+            let rowDate = new Date(start);
+            rowDate.setDate(start.getDate() + (i - 1));
+
+            let dNum = rowDate.getDate();
+            if (dNum === 9 || dNum === 19 || dNum === 29) currentBalance += divAmt;
+            else if (dNum === 1) {
+                let p = new Date(rowDate); p.setDate(0); 
+                if (p.getDate() < 29) currentBalance += divAmt;
+            }
+
+            let p1 = (currentBalance * 0.01) * rate;
+            let b1 = currentBalance + p1;
+            let p2 = (b1 * 0.01) * rate;
+            let b2 = b1 + p2;
+            let p3 = use3rd ? (b2 * 0.01) * rate : 0;
+            let b3 = b2 + p3;
+            let dProfit = p1 + p2 + p3;
+
+            tableBody.insertAdjacentHTML('beforeend', `<tr>
+                <td style="opacity: 0.8">${rowDate.toLocaleDateString('en-GB', {day:'2-digit', month:'short'})}</td>
+                <td class="text-center">${i}</td>
+                <td class="trade-cell">${fmt(b1)}</td>
+                <td class="trade-cell">${fmt(b2)}</td>
+                ${use3rd ? `<td class="trade-cell">${fmt(b3)}</td>` : ''}
+                <td class="profit-cell">${fmt(dProfit)}</td>
+            </tr>`);
+            currentBalance = b3;
+        }
+    }
+    calculate();
+</script>
+</body>
+</html>
