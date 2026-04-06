@@ -46,7 +46,9 @@
             background: var(--header-bg); padding: 8px; border-radius: 4px; font-size: 0.7rem; font-weight: bold;
             cursor: pointer; border: none; color: var(--text);
         }
-        select.toggle-box { appearance: none; -webkit-appearance: none; text-align: center; }
+        .select-wrapper { position: relative; }
+        .select-wrapper select { appearance: none; -webkit-appearance: none; text-align: center; background: transparent; border: none; color: var(--text); font-size: 0.7rem; font-weight: bold; cursor: pointer; width: 100%; padding-right: 18px; }
+        .select-wrapper::after { content: '🔽'; position: absolute; right: 6px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 0.55rem; line-height: 1; }
 
         .table-wrapper { overflow-x: auto; border: 1px solid var(--border); border-radius: 4px; }
         table { width: 100%; border-collapse: collapse; table-layout: auto; }
@@ -106,11 +108,13 @@
     <div class="controls-row">
         <label class="toggle-box"><input type="checkbox" id="toggleBonus"> 5% Bonus</label>
         <label class="toggle-box"><input type="checkbox" id="toggle3rd"> 3rd Trade</label>
-        <select class="toggle-box" id="viewToggle">
-            <option value="daily" selected>DAILY VIEW</option>
-            <option value="weekly">WEEKLY VIEW</option>
-            <option value="monthly">MONTHLY VIEW</option>
-        </select>
+        <div class="toggle-box select-wrapper">
+            <select id="viewToggle">
+                <option value="daily" selected>DAILY VIEW</option>
+                <option value="weekly">WEEKLY VIEW</option>
+                <option value="monthly">MONTHLY VIEW</option>
+            </select>
+        </div>
     </div>
 
     <div class="table-wrapper">
