@@ -46,6 +46,7 @@
             background: var(--header-bg); padding: 8px; border-radius: 4px; font-size: 0.7rem; font-weight: bold;
             cursor: pointer; border: none; color: var(--text);
         }
+        select.toggle-box { appearance: none; -webkit-appearance: none; text-align: center; }
 
         .table-wrapper { overflow-x: auto; border: 1px solid var(--border); border-radius: 4px; }
         table { width: 100%; border-collapse: collapse; table-layout: auto; }
@@ -72,7 +73,7 @@
         }
 
         /* Monthly summary rows */
-        .monthly-row td { font-weight: 500; }
+        .monthly-row td, .summary-row td { font-weight: 500; }
 
         #backToTop {
             position: fixed; bottom: 20px; right: 20px; 
@@ -105,7 +106,11 @@
     <div class="controls-row">
         <label class="toggle-box"><input type="checkbox" id="toggleBonus"> 5% Bonus</label>
         <label class="toggle-box"><input type="checkbox" id="toggle3rd"> 3rd Trade</label>
-        <button class="toggle-box" id="viewToggle">MONTHLY VIEW</button>
+        <select class="toggle-box" id="viewToggle">
+            <option value="daily" selected>DAILY VIEW</option>
+            <option value="weekly">WEEKLY VIEW</option>
+            <option value="monthly">MONTHLY VIEW</option>
+        </select>
     </div>
 
     <div class="table-wrapper">
@@ -146,10 +151,9 @@
     window.onscroll = () => topBtn.style.display = (window.scrollY > 300) ? 'flex' : 'none';
     topBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 
-    // Daily / Monthly View Toggle
-    document.getElementById('viewToggle').addEventListener('click', () => {
-        viewMode = viewMode === 'daily' ? 'monthly' : 'daily';
-        document.getElementById('viewToggle').textContent = viewMode === 'daily' ? 'MONTHLY VIEW' : 'DAILY VIEW';
+    // View Dropdown (Daily / Weekly / Monthly)
+    document.getElementById('viewToggle').addEventListener('change', () => {
+        viewMode = document.getElementById('viewToggle').value;
         renderTable();
     });
 
@@ -262,14 +266,15 @@
 
     // ---- Rendering ----
     const DAILY_HDR   = { date: 'Date',  day: 'Day',  t1: '1st Trade', t2: '2nd Trade', profit: 'Profit'       };
+    const WEEKLY_HDR  = { date: 'Week',  day: 'Days', t1: 'Start Bal', t2: 'End Bal',   profit: 'Total Profit' };
     const MONTHLY_HDR = { date: 'Month', day: 'Days', t1: 'Start Bal', t2: 'End Bal',   profit: 'Total Profit' };
 
     function renderTable() {
         const has3rd = document.getElementById('toggle3rd').checked;
-        // Hide 3rd-trade column in monthly view (no per-trade breakdown)
-        document.getElementById('th3rd').classList.toggle('hidden', !has3rd || viewMode === 'monthly');
+        // Hide 3rd-trade column in monthly/weekly view (no per-trade breakdown)
+        document.getElementById('th3rd').classList.toggle('hidden', !has3rd || viewMode !== 'daily');
 
-        const h = viewMode === 'monthly' ? MONTHLY_HDR : DAILY_HDR;
+        const h = viewMode === 'monthly' ? MONTHLY_HDR : viewMode === 'weekly' ? WEEKLY_HDR : DAILY_HDR;
         document.getElementById('thDate').textContent   = h.date;
         document.getElementById('thDay').textContent    = h.day;
         document.getElementById('th1st').textContent    = h.t1;
@@ -277,6 +282,7 @@
         document.getElementById('thProfit').textContent = h.profit;
 
         if (viewMode === 'monthly') renderMonthly(has3rd);
+        else if (viewMode === 'weekly') renderWeekly(has3rd);
         else renderDaily(has3rd);
     }
 
@@ -300,6 +306,43 @@
         const tableBody = document.getElementById('tableBody');
         tableBody.innerHTML = rows.join('');
         attachEditHandlers(tableBody);
+    }
+
+    function renderWeekly(has3rd) {
+        const weeks = new Map();
+        rowData.forEach(row => {
+            // Use Monday-based ISO week key: year + week number
+            const d = new Date(row.date);
+            d.setHours(0, 0, 0, 0);
+            const day = (d.getDay() + 6) % 7; // Monday = 0
+            const monday = new Date(d);
+            monday.setDate(d.getDate() - day);
+            const key = monday.toISOString().split('T')[0];
+            if (!weeks.has(key)) {
+                const sunday = new Date(monday);
+                sunday.setDate(monday.getDate() + 6);
+                const fmt2 = dt => dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
+                weeks.set(key, {
+                    label: `${fmt2(monday)} – ${fmt2(sunday)}`,
+                    days: 0, totalProfit: 0,
+                    startBalance: row.startBalance, endBalance: 0
+                });
+            }
+            const w = weeks.get(key);
+            w.days++;
+            w.totalProfit += row.dProfit;
+            w.endBalance = has3rd ? row.b3 : row.b2;
+        });
+
+        const rows = [...weeks.values()].map(w => `<tr class="summary-row">
+            <td class="date-col">${w.label}</td>
+            <td class="day-col" style="text-align:center">${w.days}</td>
+            <td class="trade-cell">${fmt(w.startBalance)}</td>
+            <td class="trade-cell">${fmt(w.endBalance)}</td>
+            <td class="profit-cell">${fmt(w.totalProfit)}</td>
+        </tr>`);
+
+        document.getElementById('tableBody').innerHTML = rows.join('');
     }
 
     function renderMonthly(has3rd) {
