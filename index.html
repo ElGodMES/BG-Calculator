@@ -269,9 +269,9 @@
     }
 
     // ---- Rendering ----
-    const DAILY_HDR   = { date: 'Date',  day: 'Day',  t1: '1st Trade', t2: '2nd Trade', profit: 'Profit'       };
-    const WEEKLY_HDR  = { date: 'Week',  day: 'Days', t1: 'Start Bal', t2: 'End Bal',   profit: 'Total Profit' };
-    const MONTHLY_HDR = { date: 'Month', day: 'Days', t1: 'Start Bal', t2: 'End Bal',   profit: 'Total Profit' };
+    const DAILY_HDR   = { date: 'Date',  day: 'Day',  t1: '1st Trade',  t2: '2nd Trade',   profit: 'Profit'       };
+    const WEEKLY_HDR  = { date: 'Week',  day: 'Days', t1: 'Projection', t2: 'Trade Volume', profit: 'Total Profit' };
+    const MONTHLY_HDR = { date: 'Month', day: 'Days', t1: 'Projection', t2: 'Trade Volume', profit: 'Total Profit' };
 
     function renderTable() {
         const has3rd = document.getElementById('toggle3rd').checked;
@@ -328,21 +328,21 @@
                 const fmt2 = dt => dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
                 weeks.set(key, {
                     label: `${fmt2(monday)} – ${fmt2(sunday)}`,
-                    days: 0, totalProfit: 0,
-                    startBalance: row.startBalance, endBalance: 0
+                    days: 0, totalProfit: 0, tradeVolume: 0, endBalance: 0
                 });
             }
             const w = weeks.get(key);
             w.days++;
             w.totalProfit += row.dProfit;
+            w.tradeVolume += row.startBalance * 0.01 + row.b1 * 0.01 + (has3rd ? row.b2 * 0.01 : 0);
             w.endBalance = has3rd ? row.b3 : row.b2;
         });
 
         const rows = [...weeks.values()].map(w => `<tr class="summary-row">
             <td class="date-col">${w.label}</td>
             <td class="day-col" style="text-align:center">${w.days}</td>
-            <td class="trade-cell">${fmt(w.startBalance)}</td>
             <td class="trade-cell">${fmt(w.endBalance)}</td>
+            <td class="trade-cell">${fmt(w.tradeVolume)}</td>
             <td class="profit-cell">${fmt(w.totalProfit)}</td>
         </tr>`);
 
@@ -355,21 +355,21 @@
             const key = `${row.date.getFullYear()}-${String(row.date.getMonth() + 1).padStart(2, '0')}`;            if (!months.has(key)) {
                 months.set(key, {
                     label: row.date.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
-                    days: 0, totalProfit: 0,
-                    startBalance: row.startBalance, endBalance: 0
+                    days: 0, totalProfit: 0, tradeVolume: 0, endBalance: 0
                 });
             }
             const m = months.get(key);
             m.days++;
             m.totalProfit += row.dProfit;
+            m.tradeVolume += row.startBalance * 0.01 + row.b1 * 0.01 + (has3rd ? row.b2 * 0.01 : 0);
             m.endBalance = has3rd ? row.b3 : row.b2;
         });
 
         const rows = [...months.values()].map(m => `<tr class="monthly-row">
             <td class="date-col">${m.label}</td>
             <td class="day-col" style="text-align:center">${m.days}</td>
-            <td class="trade-cell">${fmt(m.startBalance)}</td>
             <td class="trade-cell">${fmt(m.endBalance)}</td>
+            <td class="trade-cell">${fmt(m.tradeVolume)}</td>
             <td class="profit-cell">${fmt(m.totalProfit)}</td>
         </tr>`);
 
