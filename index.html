@@ -40,10 +40,11 @@
             background: var(--input-bg); color: var(--text); font-size: 0.85rem; width: 100%;
         }
 
-        .controls-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+        .controls-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
         .toggle-box { 
             display: flex; align-items: center; justify-content: center; gap: 6px; 
             background: var(--header-bg); padding: 8px; border-radius: 4px; font-size: 0.7rem; font-weight: bold;
+            cursor: pointer; border: none; color: var(--text);
         }
 
         .table-wrapper { overflow-x: auto; border: 1px solid var(--border); border-radius: 4px; }
@@ -58,6 +59,20 @@
         .profit-cell { font-weight: bold; color: var(--accent); text-align: right; }
         .trade-cell { text-align: right; }
         .hidden { display: none; }
+
+        /* Editable trade cells */
+        [contenteditable="true"] { cursor: text; outline: none; }
+        [contenteditable="true"]:focus { background: rgba(59, 130, 246, 0.12); border-radius: 2px; }
+
+        /* Visually mark cells that have been manually edited */
+        .edited-cell {
+            background: rgba(245, 158, 11, 0.14) !important;
+            border-bottom: 2px solid #f59e0b !important;
+            color: #fbbf24;
+        }
+
+        /* Monthly summary rows */
+        .monthly-row td { font-weight: 500; }
 
         #backToTop {
             position: fixed; bottom: 20px; right: 20px; 
@@ -89,18 +104,19 @@
     <div class="controls-row">
         <label class="toggle-box"><input type="checkbox" id="toggleBonus"> 5% Bonus</label>
         <label class="toggle-box"><input type="checkbox" id="toggle3rd"> 3rd Trade</label>
+        <button class="toggle-box" id="viewToggle">MONTHLY VIEW</button>
     </div>
 
     <div class="table-wrapper">
         <table id="mainTable">
             <thead>
                 <tr>
-                    <th class="date-col">Date</th>
-                    <th class="day-col">Day</th>
-                    <th style="text-align: right;">1st Trade</th>
-                    <th style="text-align: right;">2nd Trade</th>
+                    <th id="thDate" class="date-col">Date</th>
+                    <th id="thDay" class="day-col">Day</th>
+                    <th id="th1st" style="text-align: right;">1st Trade</th>
+                    <th id="th2nd" style="text-align: right;">2nd Trade</th>
                     <th id="th3rd" class="hidden" style="text-align: right;">3rd Trade</th>
-                    <th style="text-align: right;">Profit</th>
+                    <th id="thProfit" style="text-align: right;">Profit</th>
                 </tr>
             </thead>
             <tbody id="tableBody"></tbody>
@@ -111,6 +127,11 @@
 <button id="backToTop">↑</button>
 
 <script>
+    // ---- State ----
+    let rowData = [];   // computed row objects for every trading day
+    let overrides = {}; // { rowIndex: { b1?, b2?, b3? } } – user-set balances
+    let viewMode = 'daily'; // 'daily' | 'monthly'
+
     // Theme Toggle
     const themeToggle = document.getElementById('themeToggle');
     themeToggle.addEventListener('click', () => {
@@ -121,67 +142,205 @@
 
     // Scroll to Top
     const topBtn = document.getElementById('backToTop');
-    window.onscroll = () => topBtn.style.display = (window.scrollY > 300) ? "flex" : "none";
+    window.onscroll = () => topBtn.style.display = (window.scrollY > 300) ? 'flex' : 'none';
     topBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 
-    // Initialize date correctly for local timezone
+    // Daily / Monthly View Toggle
+    document.getElementById('viewToggle').addEventListener('click', () => {
+        viewMode = viewMode === 'daily' ? 'monthly' : 'daily';
+        document.getElementById('viewToggle').textContent = viewMode === 'daily' ? 'MONTHLY VIEW' : 'DAILY VIEW';
+        renderTable();
+    });
+
+    // Initialize date
     const today = new Date();
     document.getElementById('startDate').value = today.toISOString().split('T')[0];
 
+    // Re-calculate on any input change (also resets overrides)
     const inputs = ['capital', 'rate', 'dividend', 'startDate', 'durY', 'durM', 'durD', 'toggle3rd', 'toggleBonus'];
     inputs.forEach(id => document.getElementById(id).addEventListener('input', calculate));
 
-    const fmt = (num) => '$' + num.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    const fmt = (n) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const parseFmt = (s) => parseFloat(s.replace(/[$,\s]/g, '')) || 0;
 
+    // ---- Helpers ----
+    function getInputs() {
+        return {
+            baseCapital: parseFloat(document.getElementById('capital').value) || 0,
+            rate:        (parseFloat(document.getElementById('rate').value) || 0) / 100,
+            divAmt:      parseFloat(document.getElementById('dividend').value) || 0,
+            has3rd:      document.getElementById('toggle3rd').checked,
+            hasBonus:    document.getElementById('toggleBonus').checked,
+            start:       new Date(document.getElementById('startDate').value + 'T00:00:00'),
+            totalDays:   (parseInt(document.getElementById('durY').value) || 0) * 365 +
+                         (parseInt(document.getElementById('durM').value) || 0) * 30 +
+                         (parseInt(document.getElementById('durD').value) || 0)
+        };
+    }
+
+    function getDivApplied(rowDate, divAmt) {
+        const d = rowDate.getDate();
+        if (d === 9 || d === 19 || d === 29) return divAmt;
+        if (d === 1) { const p = new Date(rowDate); p.setDate(0); if (p.getDate() < 29) return divAmt; }
+        return 0;
+    }
+
+    // Compute one row's trade balances, respecting any overrides for that row.
+    function calcRow(startBal, rate, has3rd, ov) {
+        ov = ov || {};
+        const b1 = ov.b1 !== undefined ? ov.b1 : startBal + (startBal * 0.01) * rate;
+        const p1 = b1 - startBal;
+        const b2 = ov.b2 !== undefined ? ov.b2 : b1 + (b1 * 0.01) * rate;
+        const p2 = b2 - b1;
+        let b3 = b2, p3 = 0;
+        if (has3rd) {
+            b3 = ov.b3 !== undefined ? ov.b3 : b2 + (b2 * 0.01) * rate;
+            p3 = b3 - b2;
+        }
+        return { b1, p1, b2, p2, b3, p3, dProfit: (has3rd ? b3 : b2) - startBal };
+    }
+
+    // ---- Core calculation ----
     function calculate() {
-        let baseCapital = parseFloat(document.getElementById('capital').value) || 0;
-        let currentBalance = document.getElementById('toggleBonus').checked ? (baseCapital * 1.05) : baseCapital;
-        const rate = (parseFloat(document.getElementById('rate').value) || 0) / 100;
-        const divAmt = parseFloat(document.getElementById('dividend').value) || 0;
-        
-        // Correct Date Parsing (prevents the "one day off" bug)
-        const dateInput = document.getElementById('startDate').value;
-        const start = new Date(dateInput + 'T00:00:00'); 
+        overrides = {};
+        const inp = getInputs();
+        let bal = inp.hasBonus ? (inp.baseCapital * 1.05) : inp.baseCapital;
+        rowData = [];
 
-        const totalDays = (parseInt(document.getElementById('durY').value) || 0) * 365 + 
-                         (parseInt(document.getElementById('durM').value) || 0) * 30 + 
-                         (parseInt(document.getElementById('durD').value) || 0);
+        for (let i = 0; i < inp.totalDays; i++) {
+            const rowDate = new Date(inp.start);
+            rowDate.setDate(inp.start.getDate() + i);
+            const divApplied = getDivApplied(rowDate, inp.divAmt);
+            bal += divApplied;
+            const calc = calcRow(bal, inp.rate, inp.has3rd, null);
+            rowData.push({ date: rowDate, dayNum: i + 1, startBalance: bal, divApplied, ...calc });
+            bal = inp.has3rd ? calc.b3 : calc.b2;
+        }
+        renderTable();
+    }
+
+    // Re-run calculations from a given row index forward (after a cell override).
+    function recalculateFrom(startIndex) {
+        const inp = getInputs();
+        for (let i = startIndex; i < rowData.length; i++) {
+            let bal = i === 0
+                ? (inp.hasBonus ? inp.baseCapital * 1.05 : inp.baseCapital)
+                : (inp.has3rd ? rowData[i - 1].b3 : rowData[i - 1].b2);
+            bal += rowData[i].divApplied;
+            rowData[i].startBalance = bal;
+            const calc = calcRow(bal, inp.rate, inp.has3rd, overrides[i]);
+            Object.assign(rowData[i], calc);
+        }
+        renderTable();
+    }
+
+    // ---- Rendering ----
+    const DAILY_HDR   = { date: 'Date',  day: 'Day',  t1: '1st Trade', t2: '2nd Trade', profit: 'Profit'       };
+    const MONTHLY_HDR = { date: 'Month', day: 'Days', t1: 'Start Bal', t2: 'End Bal',   profit: 'Total Profit' };
+
+    function renderTable() {
+        const has3rd = document.getElementById('toggle3rd').checked;
+        // Hide 3rd-trade column in monthly view (no per-trade breakdown)
+        document.getElementById('th3rd').classList.toggle('hidden', !has3rd || viewMode === 'monthly');
+
+        const h = viewMode === 'monthly' ? MONTHLY_HDR : DAILY_HDR;
+        document.getElementById('thDate').textContent   = h.date;
+        document.getElementById('thDay').textContent    = h.day;
+        document.getElementById('th1st').textContent    = h.t1;
+        document.getElementById('th2nd').textContent    = h.t2;
+        document.getElementById('thProfit').textContent = h.profit;
+
+        if (viewMode === 'monthly') renderMonthly(has3rd);
+        else renderDaily(has3rd);
+    }
+
+    function renderDaily(has3rd) {
+        const rows = rowData.map((row, i) => {
+            const ov = overrides[i] || {};
+            const dateStr = row.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
+            const c1 = 'trade-cell' + (ov.b1 !== undefined ? ' edited-cell' : '');
+            const c2 = 'trade-cell' + (ov.b2 !== undefined ? ' edited-cell' : '');
+            const c3 = 'trade-cell' + (ov.b3 !== undefined ? ' edited-cell' : '');
+            return `<tr>
+                <td class="date-col" style="opacity:0.8">${dateStr}</td>
+                <td class="day-col">${row.dayNum}</td>
+                <td class="${c1}" contenteditable="true" data-row="${i}" data-col="b1">${fmt(row.b1)}</td>
+                <td class="${c2}" contenteditable="true" data-row="${i}" data-col="b2">${fmt(row.b2)}</td>
+                ${has3rd ? `<td class="${c3}" contenteditable="true" data-row="${i}" data-col="b3">${fmt(row.b3)}</td>` : ''}
+                <td class="profit-cell">${fmt(row.dProfit)}</td>
+            </tr>`;
+        });
 
         const tableBody = document.getElementById('tableBody');
-        document.getElementById('th3rd').classList.toggle('hidden', !document.getElementById('toggle3rd').checked);
-        tableBody.innerHTML = '';
-
-        for (let i = 1; i <= totalDays; i++) {
-            let rowDate = new Date(start);
-            rowDate.setDate(start.getDate() + (i - 1));
-
-            // Dividend Logic
-            let dNum = rowDate.getDate();
-            if (dNum === 9 || dNum === 19 || dNum === 29) currentBalance += divAmt;
-            else if (dNum === 1) {
-                let p = new Date(rowDate); p.setDate(0); 
-                if (p.getDate() < 29) currentBalance += divAmt;
-            }
-
-            let p1 = (currentBalance * 0.01) * rate;
-            let b1 = currentBalance + p1;
-            let p2 = (b1 * 0.01) * rate;
-            let b2 = b1 + p2;
-            let p3 = document.getElementById('toggle3rd').checked ? (b2 * 0.01) * rate : 0;
-            let b3 = b2 + p3;
-            let dProfit = p1 + p2 + p3;
-
-            tableBody.insertAdjacentHTML('beforeend', `<tr>
-                <td class="date-col" style="opacity: 0.8">${rowDate.toLocaleDateString('en-GB', {day:'2-digit', month:'short', year:'2-digit'})}</td>
-                <td class="day-col">${i}</td>
-                <td class="trade-cell">${fmt(b1)}</td>
-                <td class="trade-cell">${fmt(b2)}</td>
-                ${document.getElementById('toggle3rd').checked ? `<td class="trade-cell">${fmt(b3)}</td>` : ''}
-                <td class="profit-cell">${fmt(dProfit)}</td>
-            </tr>`);
-            currentBalance = b3;
-        }
+        tableBody.innerHTML = rows.join('');
+        attachEditHandlers(tableBody);
     }
+
+    function renderMonthly(has3rd) {
+        const months = new Map();
+        rowData.forEach(row => {
+            const key = `${row.date.getFullYear()}-${String(row.date.getMonth() + 1).padStart(2, '0')}`;            if (!months.has(key)) {
+                months.set(key, {
+                    label: row.date.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
+                    days: 0, totalProfit: 0,
+                    startBalance: row.startBalance, endBalance: 0
+                });
+            }
+            const m = months.get(key);
+            m.days++;
+            m.totalProfit += row.dProfit;
+            m.endBalance = has3rd ? row.b3 : row.b2;
+        });
+
+        const rows = [...months.values()].map(m => `<tr class="monthly-row">
+            <td class="date-col">${m.label}</td>
+            <td class="day-col" style="text-align:center">${m.days}</td>
+            <td class="trade-cell">${fmt(m.startBalance)}</td>
+            <td class="trade-cell">${fmt(m.endBalance)}</td>
+            <td class="profit-cell">${fmt(m.totalProfit)}</td>
+        </tr>`);
+
+        document.getElementById('tableBody').innerHTML = rows.join('');
+    }
+
+    // ---- Cell Editing ----
+    function attachEditHandlers(tableBody) {
+        tableBody.querySelectorAll('[contenteditable="true"]').forEach(cell => {
+            cell.addEventListener('focus', () => {
+                const range = document.createRange();
+                range.selectNodeContents(cell);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            });
+            cell.addEventListener('blur', handleCellEdit);
+            cell.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); cell.blur(); }
+                if (e.key === 'Escape') {
+                    const ri = parseInt(cell.dataset.row);
+                    cell.textContent = fmt(rowData[ri][cell.dataset.col]);
+                    cell.blur();
+                }
+            });
+        });
+    }
+
+    function handleCellEdit(e) {
+        const cell = e.target;
+        const ri  = parseInt(cell.dataset.row);
+        const col = cell.dataset.col;
+        const newVal = parseFmt(cell.textContent);
+
+        if (!newVal || newVal <= 0) {
+            cell.textContent = fmt(rowData[ri][col]);
+            return;
+        }
+
+        if (!overrides[ri]) overrides[ri] = {};
+        overrides[ri][col] = newVal;
+        recalculateFrom(ri);
+    }
+
     calculate();
 </script>
 </body>
