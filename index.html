@@ -218,14 +218,14 @@
     }
 
     // Compute the bonus amounts for a single day from the Dynamic Bonus input.
-    // Each unit = profit of 1% of baseCapital at the current rate. Max 2 units applied after 1st trade, max 2 after 2nd/3rd trade.
+    // The dynBonus value is a direct monetary amount. Each trade uses 2 units of this value.
+    // Max 2 units applied after 1st trade, max 2 after 2nd/3rd trade.
     // Any remainder carries to the next day's starting balance.
     function getBonusAmounts(inp) {
         if (!inp.dynBonus || inp.dynBonus <= 0) return { t1: 0, t2orT3: 0, carry: 0 };
-        const unit = inp.baseCapital * 0.01 * inp.rate;
-        const t1 = Math.min(2, inp.dynBonus) * unit;
-        const t2orT3 = Math.min(2, Math.max(0, inp.dynBonus - 2)) * unit;
-        const carry = Math.max(0, inp.dynBonus - 4) * unit;
+        const t1 = Math.min(2, inp.dynBonus);
+        const t2orT3 = Math.min(2, Math.max(0, inp.dynBonus - 2));
+        const carry = Math.max(0, inp.dynBonus - 4);
         return { t1, t2orT3, carry };
     }
 
