@@ -217,15 +217,14 @@
         return { b1, p1, b2, p2, b3, p3, dProfit: (has3rd ? b3 : b2) - startBal };
     }
 
-    // Compute the bonus amounts for a single day from the Dynamic Bonus input.
-    // The dynBonus value is a direct monetary amount. Each trade uses 2 units of this value.
-    // Max 2 units applied after 1st trade, max 2 after 2nd/3rd trade.
-    // Any remainder carries to the next day's starting balance.
-    function getBonusAmounts(inp) {
-        if (!inp.dynBonus || inp.dynBonus <= 0) return { t1: 0, t2orT3: 0, carry: 0 };
-        const t1 = Math.min(2, inp.dynBonus);
-        const t2orT3 = Math.min(2, Math.max(0, inp.dynBonus - 2));
-        const carry = Math.max(0, inp.dynBonus - 4);
+    // Compute the bonus amounts for a single day from remaining Dynamic Bonus.
+    // The dynBonus value is distributed across trades over multiple days.
+    // Max 2 units applied after 1st trade, max 2 after 2nd/3rd trade per day.
+    function getBonusAmounts(remaining) {
+        if (!remaining || remaining <= 0) return { t1: 0, t2orT3: 0, carry: 0 };
+        const t1 = Math.min(2, remaining);
+        const t2orT3 = Math.min(2, Math.max(0, remaining - 2));
+        const carry = Math.max(0, remaining - 4);
         return { t1, t2orT3, carry };
     }
 
@@ -235,17 +234,17 @@
         const inp = getInputs();
         let bal = inp.hasBonus ? (inp.baseCapital * 1.05) : inp.baseCapital;
         rowData = [];
-        const bonusAmts = getBonusAmounts(inp);
-        let carryBonus = 0;
+        let remainingBonus = inp.dynBonus;
 
         for (let i = 0; i < inp.totalDays; i++) {
             const rowDate = new Date(inp.start);
             rowDate.setDate(inp.start.getDate() + i);
             const divApplied = getDivApplied(rowDate, inp.divAmt);
-            bal += divApplied + carryBonus;
+            bal += divApplied;
+            const bonusAmts = getBonusAmounts(remainingBonus);
             const calc = calcRow(bal, inp.rate, inp.has3rd, null, bonusAmts.t1, bonusAmts.t2orT3);
-            rowData.push({ date: rowDate, dayNum: i + 1, startBalance: bal, divApplied, carryBonus: bonusAmts.carry, ...calc });
-            carryBonus = bonusAmts.carry;
+            rowData.push({ date: rowDate, dayNum: i + 1, startBalance: bal, divApplied, remainingBonus, ...calc });
+            remainingBonus = bonusAmts.carry;
             bal = inp.has3rd ? calc.b3 : calc.b2;
         }
         renderTable();
@@ -254,17 +253,27 @@
     // Re-run calculations from a given row index forward (after a cell override).
     function recalculateFrom(startIndex) {
         const inp = getInputs();
-        const bonusAmts = getBonusAmounts(inp);
+        // Determine the remaining bonus to start with
+        let remainingBonus;
+        if (startIndex === 0) {
+            remainingBonus = inp.dynBonus;
+        } else {
+            // Get the remaining bonus after the previous row was processed
+            const prevBonusAmts = getBonusAmounts(rowData[startIndex - 1].remainingBonus);
+            remainingBonus = prevBonusAmts.carry;
+        }
+
         for (let i = startIndex; i < rowData.length; i++) {
-            const carryFromPrev = i > 0 ? (rowData[i - 1].carryBonus || 0) : 0;
             let bal = i === 0
                 ? (inp.hasBonus ? inp.baseCapital * 1.05 : inp.baseCapital)
-                : (inp.has3rd ? rowData[i - 1].b3 : rowData[i - 1].b2) + carryFromPrev;
+                : (inp.has3rd ? rowData[i - 1].b3 : rowData[i - 1].b2);
             bal += rowData[i].divApplied;
             rowData[i].startBalance = bal;
+            const bonusAmts = getBonusAmounts(remainingBonus);
             const calc = calcRow(bal, inp.rate, inp.has3rd, overrides[i], bonusAmts.t1, bonusAmts.t2orT3);
             Object.assign(rowData[i], calc);
-            rowData[i].carryBonus = bonusAmts.carry;
+            rowData[i].remainingBonus = remainingBonus;
+            remainingBonus = bonusAmts.carry;
         }
         renderTable();
     }
