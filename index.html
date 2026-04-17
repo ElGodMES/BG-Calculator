@@ -40,7 +40,7 @@
             background: var(--input-bg); color: var(--text); font-size: 0.85rem; width: 100%;
         }
 
-        .controls-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+        .controls-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
         .toggle-box { 
             display: flex; align-items: center; justify-content: center; gap: 6px; 
             background: var(--header-bg); padding: 8px; border-radius: 4px; font-size: 0.7rem; font-weight: bold;
@@ -109,6 +109,7 @@
     <div class="controls-row">
         <label class="toggle-box"><input type="checkbox" id="toggleBonus"> 5% Bonus</label>
         <label class="toggle-box"><input type="checkbox" id="toggle3rd"> 3rd Trade</label>
+        <label class="toggle-box"><input type="checkbox" id="toggle4th"> 4th Trade</label>
         <div class="toggle-box select-wrapper">
             <select id="viewToggle">
                 <option value="daily" selected>DAILY VIEW</option>
@@ -127,6 +128,7 @@
                     <th id="th1st" style="text-align: right;">1st Trade</th>
                     <th id="th2nd" style="text-align: right;">2nd Trade</th>
                     <th id="th3rd" class="hidden" style="text-align: right;">3rd Trade</th>
+                    <th id="th4th" class="hidden" style="text-align: right;">4th Trade</th>
                     <th id="thProfit" style="text-align: right;">Profit</th>
                 </tr>
             </thead>
@@ -167,7 +169,7 @@
     document.getElementById('startDate').value = today.toISOString().split('T')[0];
 
     // Re-calculate on any input change (also resets overrides)
-    const inputs = ['capital', 'rate', 'dividend', 'startDate', 'durY', 'durM', 'durD', 'toggle3rd', 'toggleBonus', 'dynBonus'];
+    const inputs = ['capital', 'rate', 'dividend', 'startDate', 'durY', 'durM', 'durD', 'toggle3rd', 'toggle4th', 'toggleBonus', 'dynBonus'];
     inputs.forEach(id => document.getElementById(id).addEventListener('input', calculate));
 
     const fmt = (n) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -180,6 +182,7 @@
             rate:        (parseFloat(document.getElementById('rate').value) || 0) / 100,
             divAmt:      parseFloat(document.getElementById('dividend').value) || 0,
             has3rd:      document.getElementById('toggle3rd').checked,
+            has4th:      document.getElementById('toggle4th').checked,
             hasBonus:    document.getElementById('toggleBonus').checked,
             dynBonus:    parseFloat(document.getElementById('dynBonus').value) || 0,
             start:       new Date(document.getElementById('startDate').value + 'T00:00:00'),
@@ -197,24 +200,42 @@
     }
 
     // Compute one row's trade balances, respecting any overrides for that row.
-    function calcRow(startBal, rate, has3rd, ov, bonusT1, bonusT2orT3) {
+    function calcRow(startBal, rate, has3rd, has4th, ov, bonusT1, bonusT2orT3) {
         ov = ov || {};
         bonusT1 = bonusT1 || 0;
         bonusT2orT3 = bonusT2orT3 || 0;
         const b1 = ov.b1 !== undefined ? ov.b1 : startBal + (startBal * 0.01) * rate + bonusT1;
         const p1 = b1 - startBal;
-        let b2, p2, b3, p3;
+        let b2, p2, b3, p3, b4, p4;
         if (has3rd) {
             b2 = ov.b2 !== undefined ? ov.b2 : b1 + (b1 * 0.01) * rate;
             p2 = b2 - b1;
-            b3 = ov.b3 !== undefined ? ov.b3 : b2 + (b2 * 0.01) * rate + bonusT2orT3;
-            p3 = b3 - b2;
+            if (has4th) {
+                b3 = ov.b3 !== undefined ? ov.b3 : b2 + (b2 * 0.01) * rate;
+                p3 = b3 - b2;
+                b4 = ov.b4 !== undefined ? ov.b4 : b3 + (b3 * 0.01) * rate + bonusT2orT3;
+                p4 = b4 - b3;
+            } else {
+                b3 = ov.b3 !== undefined ? ov.b3 : b2 + (b2 * 0.01) * rate + bonusT2orT3;
+                p3 = b3 - b2;
+                b4 = b3; p4 = 0;
+            }
         } else {
-            b2 = ov.b2 !== undefined ? ov.b2 : b1 + (b1 * 0.01) * rate + bonusT2orT3;
-            p2 = b2 - b1;
-            b3 = b2; p3 = 0;
+            if (has4th) {
+                b2 = ov.b2 !== undefined ? ov.b2 : b1 + (b1 * 0.01) * rate;
+                p2 = b2 - b1;
+                b3 = b2; p3 = 0;
+                b4 = ov.b4 !== undefined ? ov.b4 : b2 + (b2 * 0.01) * rate + bonusT2orT3;
+                p4 = b4 - b2;
+            } else {
+                b2 = ov.b2 !== undefined ? ov.b2 : b1 + (b1 * 0.01) * rate + bonusT2orT3;
+                p2 = b2 - b1;
+                b3 = b2; p3 = 0;
+                b4 = b2; p4 = 0;
+            }
         }
-        return { b1, p1, b2, p2, b3, p3, dProfit: (has3rd ? b3 : b2) - startBal };
+        const endBal = has4th ? b4 : (has3rd ? b3 : b2);
+        return { b1, p1, b2, p2, b3, p3, b4, p4, dProfit: endBal - startBal };
     }
 
     // Compute the bonus amounts for a single day from remaining Dynamic Bonus.
@@ -242,10 +263,10 @@
             const divApplied = getDivApplied(rowDate, inp.divAmt);
             bal += divApplied;
             const bonusAmts = getBonusAmounts(remainingBonus);
-            const calc = calcRow(bal, inp.rate, inp.has3rd, null, bonusAmts.t1, bonusAmts.t2orT3);
+            const calc = calcRow(bal, inp.rate, inp.has3rd, inp.has4th, null, bonusAmts.t1, bonusAmts.t2orT3);
             rowData.push({ date: rowDate, dayNum: i + 1, startBalance: bal, divApplied, remainingBonus, ...calc });
             remainingBonus = bonusAmts.carry;
-            bal = inp.has3rd ? calc.b3 : calc.b2;
+            bal = inp.has4th ? calc.b4 : (inp.has3rd ? calc.b3 : calc.b2);
         }
         renderTable();
     }
@@ -266,11 +287,11 @@
         for (let i = startIndex; i < rowData.length; i++) {
             let bal = i === 0
                 ? (inp.hasBonus ? inp.baseCapital * 1.05 : inp.baseCapital)
-                : (inp.has3rd ? rowData[i - 1].b3 : rowData[i - 1].b2);
+                : (inp.has4th ? rowData[i - 1].b4 : inp.has3rd ? rowData[i - 1].b3 : rowData[i - 1].b2);
             bal += rowData[i].divApplied;
             rowData[i].startBalance = bal;
             const bonusAmts = getBonusAmounts(remainingBonus);
-            const calc = calcRow(bal, inp.rate, inp.has3rd, overrides[i], bonusAmts.t1, bonusAmts.t2orT3);
+            const calc = calcRow(bal, inp.rate, inp.has3rd, inp.has4th, overrides[i], bonusAmts.t1, bonusAmts.t2orT3);
             Object.assign(rowData[i], calc);
             rowData[i].remainingBonus = remainingBonus;
             remainingBonus = bonusAmts.carry;
@@ -285,8 +306,10 @@
 
     function renderTable() {
         const has3rd = document.getElementById('toggle3rd').checked;
-        // Hide 3rd-trade column in monthly/weekly view (no per-trade breakdown)
+        const has4th = document.getElementById('toggle4th').checked;
+        // Hide 3rd/4th-trade columns in monthly/weekly view (no per-trade breakdown)
         document.getElementById('th3rd').classList.toggle('hidden', !has3rd || viewMode !== 'daily');
+        document.getElementById('th4th').classList.toggle('hidden', !has4th || viewMode !== 'daily');
 
         const h = viewMode === 'monthly' ? MONTHLY_HDR : viewMode === 'weekly' ? WEEKLY_HDR : DAILY_HDR;
         document.getElementById('thDate').textContent   = h.date;
@@ -301,18 +324,21 @@
     }
 
     function renderDaily(has3rd) {
+        const has4th = document.getElementById('toggle4th').checked;
         const rows = rowData.map((row, i) => {
             const ov = overrides[i] || {};
             const dateStr = row.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
             const c1 = 'trade-cell' + (ov.b1 !== undefined ? ' edited-cell' : '');
             const c2 = 'trade-cell' + (ov.b2 !== undefined ? ' edited-cell' : '');
             const c3 = 'trade-cell' + (ov.b3 !== undefined ? ' edited-cell' : '');
+            const c4 = 'trade-cell' + (ov.b4 !== undefined ? ' edited-cell' : '');
             return `<tr>
                 <td class="date-col" style="opacity:0.8">${dateStr}</td>
                 <td class="day-col">${row.dayNum}</td>
                 <td class="${c1}" contenteditable="true" data-row="${i}" data-col="b1">${fmt(row.b1)}</td>
                 <td class="${c2}" contenteditable="true" data-row="${i}" data-col="b2">${fmt(row.b2)}</td>
                 ${has3rd ? `<td class="${c3}" contenteditable="true" data-row="${i}" data-col="b3">${fmt(row.b3)}</td>` : ''}
+                ${has4th ? `<td class="${c4}" contenteditable="true" data-row="${i}" data-col="b4">${fmt(row.b4)}</td>` : ''}
                 <td class="profit-cell">${fmt(row.dProfit)}</td>
             </tr>`;
         });
@@ -323,6 +349,7 @@
     }
 
     function renderWeekly(has3rd) {
+        const has4th = document.getElementById('toggle4th').checked;
         const weeks = new Map();
         rowData.forEach(row => {
             // Use Monday-based ISO week key: year + week number
@@ -344,8 +371,9 @@
             const w = weeks.get(key);
             w.days++;
             w.totalProfit += row.dProfit;
-            w.tradeVolume += row.startBalance * 0.01 + row.b1 * 0.01 + (has3rd ? row.b2 * 0.01 : 0);
-            w.endBalance = has3rd ? row.b3 : row.b2;
+            const fourthTradeVol = has4th ? (has3rd ? row.b3 : row.b2) * 0.01 : 0;
+            w.tradeVolume += row.startBalance * 0.01 + row.b1 * 0.01 + (has3rd ? row.b2 * 0.01 : 0) + fourthTradeVol;
+            w.endBalance = has4th ? row.b4 : (has3rd ? row.b3 : row.b2);
         });
 
         const rows = [...weeks.values()].map(w => `<tr class="summary-row">
@@ -360,6 +388,7 @@
     }
 
     function renderMonthly(has3rd) {
+        const has4th = document.getElementById('toggle4th').checked;
         const months = new Map();
         rowData.forEach(row => {
             const key = `${row.date.getFullYear()}-${String(row.date.getMonth() + 1).padStart(2, '0')}`;            if (!months.has(key)) {
@@ -371,8 +400,9 @@
             const m = months.get(key);
             m.days++;
             m.totalProfit += row.dProfit;
-            m.tradeVolume += row.startBalance * 0.01 + row.b1 * 0.01 + (has3rd ? row.b2 * 0.01 : 0);
-            m.endBalance = has3rd ? row.b3 : row.b2;
+            const fourthTradeVol = has4th ? (has3rd ? row.b3 : row.b2) * 0.01 : 0;
+            m.tradeVolume += row.startBalance * 0.01 + row.b1 * 0.01 + (has3rd ? row.b2 * 0.01 : 0) + fourthTradeVol;
+            m.endBalance = has4th ? row.b4 : (has3rd ? row.b3 : row.b2);
         });
 
         const rows = [...months.values()].map(m => `<tr class="monthly-row">
